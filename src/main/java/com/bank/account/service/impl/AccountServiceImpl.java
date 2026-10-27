@@ -15,6 +15,11 @@ import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -27,6 +32,7 @@ public class AccountServiceImpl implements AccountService {
 
     private final AccountRepository repository;
     private final CustomerClient customerClient;
+    private final ReactiveMongoTemplate mongoTemplate;
 
     @Override
     public Single<AccountDto> create(AccountDto dto) {
@@ -88,6 +94,22 @@ public class AccountServiceImpl implements AccountService {
                     }
                     return Single.fromPublisher(repository.save(existing));
                 })
+                .map(AccountMapper::toDto);
+    }
+
+    @Override
+    public Single<AccountDto> updateBalance(String accountNumber, BigDecimal amount) {
+        log.info("Updating balance of account {} by {}", accountNumber, amount);
+        Query query = new Query(Criteria.where("accountNumber").is(accountNumber));
+        if (amount.signum() < 0) {
+            // atomic guard: only subtract if there are enough funds
+            query.addCriteria(Criteria.where("balance").gte(amount.negate()));
+        }
+        Update update = new Update().inc("balance", amount);
+        return Maybe.fromPublisher(mongoTemplate.findAndModify(
+                        query, update, FindAndModifyOptions.options().returnNew(true), Account.class))
+                .switchIfEmpty(findEntity(accountNumber)
+                        .flatMap(a -> Single.<Account>error(new BusinessException("Insufficient funds"))))
                 .map(AccountMapper::toDto);
     }
 

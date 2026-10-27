@@ -1,13 +1,21 @@
 # IDE
 .idea/
 *.iml
+*.iws
+*.ipr
 .vscode/
 .classpath
 .project
 .settings/
+.apt_generated
+.factorypath
+.springBeans
+.sts4-cache
+HELP.md
 
 # Maven
 target/
+.mvn/wrapper/maven-wrapper.jar
 
 # Variables locales
 *.env
@@ -37,3 +45,15 @@ application-local.yml
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+!**/src/main/**/target/
+!**/src/test/**/target/
