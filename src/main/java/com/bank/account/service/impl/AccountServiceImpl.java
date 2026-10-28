@@ -41,6 +41,21 @@ public class AccountServiceImpl implements AccountService {
     @Value("${business.checking-maintenance-fee}")
     private BigDecimal checkingFee;
 
+    @Value("${business.min-opening-savings}")
+    private BigDecimal minOpeningSavings;
+
+    @Value("${business.min-opening-checking}")
+    private BigDecimal minOpeningChecking;
+
+    @Value("${business.min-opening-fixed-term}")
+    private BigDecimal minOpeningFixedTerm;
+
+    @Value("${business.free-transactions}")
+    private int freeTransactions;
+
+    @Value("${business.transaction-fee}")
+    private BigDecimal transactionFee;
+
     @Override
     public Single<AccountDto> create(AccountDto dto) {
         log.info("Creating {} account for customer {}", dto.getAccountType(), dto.getCustomerDocument());
@@ -49,6 +64,7 @@ public class AccountServiceImpl implements AccountService {
                     dto.setCustomerType(customer.getType());
                     return validate(dto);
                 })
+                .flatMap(this::validateOpeningAmount)
                 .map(valid -> {
                     Account entity = AccountMapper.toEntity(valid);
                     entity.setId(null);
@@ -175,6 +191,9 @@ public class AccountServiceImpl implements AccountService {
                 entity.setMonthlyMovementLimit(1);
             }
         }
+        entity.setMinimumOpeningAmount(minimumOpening(entity.getAccountType()));
+        entity.setFreeTransactionLimit(freeTransactions);
+        entity.setTransactionFee(transactionFee);
     }
 
     private String generateAccountNumber() {
@@ -185,5 +204,26 @@ public class AccountServiceImpl implements AccountService {
         return Maybe.fromPublisher(repository.findByAccountNumber(accountNumber))
                 .switchIfEmpty(Single.error(
                         new NotFoundException("Account not found: " + accountNumber)));
+    }
+
+    /** Rejects the account if the opening balance is below the minimum for its type. */
+    private Single<AccountDto> validateOpeningAmount(AccountDto dto) {
+        BigDecimal minimum = minimumOpening(dto.getAccountType());
+        BigDecimal opening = dto.getBalance() == null ? BigDecimal.ZERO : dto.getBalance();
+        if (opening.compareTo(minimum) < 0) {
+            log.warn("Opening amount {} is below the minimum {}", opening, minimum);
+            return Single.error(new BusinessException(
+                    "Minimum opening amount for " + dto.getAccountType() + " is " + minimum));
+        }
+        return Single.just(dto);
+    }
+
+    /** Minimum opening amount configured for each account type. */
+    private BigDecimal minimumOpening(AccountType type) {
+        return switch (type) {
+            case SAVINGS -> minOpeningSavings;
+            case CHECKING -> minOpeningChecking;
+            case FIXED_TERM -> minOpeningFixedTerm;
+        };
     }
 }

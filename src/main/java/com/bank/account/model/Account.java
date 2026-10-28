@@ -43,4 +43,13 @@ public class Account {
 
     /** Document numbers of authorized signers. */
     private List<String> authorizedSigners;
+
+    /** Minimum amount required to open the account. */
+    private BigDecimal minimumOpeningAmount;
+
+    /** Transactions per month that are free of commission. */
+    private Integer freeTransactionLimit;
+
+    /** Commission charged per transaction beyond the free limit. */
+    private BigDecimal transactionFee;
 }

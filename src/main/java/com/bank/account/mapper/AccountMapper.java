@@ -23,6 +23,9 @@ public final class AccountMapper {
                 .monthlyMovementLimit(e.getMonthlyMovementLimit())
                 .holders(e.getHolders())
                 .authorizedSigners(e.getAuthorizedSigners())
+                .minimumOpeningAmount(e.getMinimumOpeningAmount())
+                .freeTransactionLimit(e.getFreeTransactionLimit())
+                .transactionFee(e.getTransactionFee())
                 .build();
     }
 
