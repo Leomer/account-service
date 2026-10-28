@@ -1,0 +1,185 @@
+openapi: 3.1.0
+info:
+  title: OpenAPI definition
+  version: v0
+servers:
+- url: http://localhost:8082
+  description: Generated server url
+paths:
+  /accounts/{accountNumber}:
+    get:
+      tags:
+      - account-controller
+      operationId: findByAccountNumber
+      parameters:
+      - name: accountNumber
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SingleAccountDto"
+    put:
+      tags:
+      - account-controller
+      operationId: update
+      parameters:
+      - name: accountNumber
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountDto"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SingleAccountDto"
+    delete:
+      tags:
+      - account-controller
+      operationId: delete
+      parameters:
+      - name: accountNumber
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: No Content
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Completable"
+  /accounts:
+    get:
+      tags:
+      - account-controller
+      operationId: findAll
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/AccountDto"
+    post:
+      tags:
+      - account-controller
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountDto"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SingleAccountDto"
+  /accounts/{accountNumber}/balance:
+    patch:
+      tags:
+      - account-controller
+      operationId: updateBalance
+      parameters:
+      - name: accountNumber
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BalanceUpdateRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SingleAccountDto"
+  /accounts/customer/{customerDocument}:
+    get:
+      tags:
+      - account-controller
+      operationId: findByCustomer
+      parameters:
+      - name: customerDocument
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/AccountDto"
+components:
+  schemas:
+    AccountDto:
+      type: object
+      properties:
+        id:
+          type: string
+        accountNumber:
+          type: string
+        accountType:
+          type: string
+          enum:
+          - SAVINGS
+          - CHECKING
+          - FIXED_TERM
+        customerDocument:
+          type: string
+          minLength: 1
+        customerType:
+          type: string
+        balance:
+          type: number
+          minimum: 0.0
+        maintenanceFee:
+          type: number
+        monthlyMovementLimit:
+          type: integer
+          format: int32
+        holders:
+          type: array
+          items:
+            type: string
+        authorizedSigners:
+          type: array
+          items:
+            type: string
+      required:
+      - accountType
+      - customerDocument
+    SingleAccountDto: {}
+    BalanceUpdateRequest:
+      type: object
+      properties:
+        amount:
+          type: number
+      required:
+      - amount
+    Completable: {}
