@@ -7,9 +7,14 @@ import com.bank.account.dto.CreditResponse;
 import com.bank.account.dto.CustomerResponse;
 import com.bank.account.exception.BusinessException;
 import com.bank.account.exception.NotFoundException;
+import com.bank.account.factory.AccountFactory;
 import com.bank.account.model.Account;
 import com.bank.account.model.AccountType;
 import com.bank.account.repository.AccountRepository;
+import com.bank.account.strategy.AccountStrategyRegistry;
+import com.bank.account.strategy.CheckingStrategy;
+import com.bank.account.strategy.FixedTermStrategy;
+import com.bank.account.strategy.SavingsStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,20 +54,18 @@ class AccountServiceImplTest {
     @Mock
     private CreditClient creditClient;
 
-    @InjectMocks
     private AccountServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        // @Value fields are not filled by Mockito, so we set them manually
-        ReflectionTestUtils.setField(service, "savingsMovementLimit", 10);
-        ReflectionTestUtils.setField(service, "checkingFee", new BigDecimal("10.00"));
-        ReflectionTestUtils.setField(service, "minOpeningSavings", BigDecimal.ZERO);
-        ReflectionTestUtils.setField(service, "minOpeningChecking", BigDecimal.ZERO);
-        ReflectionTestUtils.setField(service, "minOpeningFixedTerm", BigDecimal.ZERO);
-        ReflectionTestUtils.setField(service, "freeTransactions", 5);
-        ReflectionTestUtils.setField(service, "transactionFee", new BigDecimal("1.50"));
-        ReflectionTestUtils.setField(service, "vipMinimumDailyAverage", new BigDecimal("500"));
+        AccountStrategyRegistry registry = new AccountStrategyRegistry(List.of(
+                new SavingsStrategy(BigDecimal.ZERO, 10),
+                new CheckingStrategy(BigDecimal.ZERO, new BigDecimal("10.00")),
+                new FixedTermStrategy(BigDecimal.ZERO)));
+        AccountFactory factory = new AccountFactory(registry, 5, new BigDecimal("1.50"),
+                new BigDecimal("500"));
+        service = new AccountServiceImpl(repository, customerClient, mongoTemplate,
+                creditClient, registry, factory);
     }
 
     // ---------- helpers ----------
@@ -208,7 +211,7 @@ class AccountServiceImplTest {
 
     @Test
     void createShouldFailWhenOpeningAmountIsBelowMinimum() {
-        ReflectionTestUtils.setField(service, "minOpeningChecking", new BigDecimal("50"));
+        useCheckingMinimum("50");
         when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
         when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.CHECKING))
                 .thenReturn(Mono.just(0L));
@@ -223,7 +226,7 @@ class AccountServiceImplTest {
 
     @Test
     void createShouldSucceedWhenOpeningAmountMeetsMinimum() {
-        ReflectionTestUtils.setField(service, "minOpeningChecking", new BigDecimal("50"));
+        useCheckingMinimum("50");
         when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
         when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.CHECKING))
                 .thenReturn(Mono.just(0L));
@@ -244,6 +247,17 @@ class AccountServiceImplTest {
         CustomerResponse c = customer(type);
         c.setProfile(profile);
         return c;
+    }
+
+    private void useCheckingMinimum(String minimum) {
+        AccountStrategyRegistry registry = new AccountStrategyRegistry(List.of(
+                new SavingsStrategy(BigDecimal.ZERO, 10),
+                new CheckingStrategy(new BigDecimal(minimum), new BigDecimal("10.00")),
+                new FixedTermStrategy(BigDecimal.ZERO)));
+        AccountFactory factory = new AccountFactory(registry, 5, new BigDecimal("1.50"),
+                new BigDecimal("500"));
+        service = new AccountServiceImpl(repository, customerClient, mongoTemplate,
+                creditClient, registry, factory);
     }
 
     private CreditResponse card() {

@@ -1,13 +1,19 @@
 package com.bank.account.service.impl;
 
+import com.bank.account.client.CreditClient;
 import com.bank.account.client.CustomerClient;
 import com.bank.account.dto.AccountDto;
 import com.bank.account.dto.CustomerResponse;
 import com.bank.account.exception.BusinessException;
 import com.bank.account.exception.NotFoundException;
+import com.bank.account.factory.AccountFactory;
 import com.bank.account.model.Account;
 import com.bank.account.model.AccountType;
 import com.bank.account.repository.AccountRepository;
+import com.bank.account.strategy.AccountStrategyRegistry;
+import com.bank.account.strategy.CheckingStrategy;
+import com.bank.account.strategy.FixedTermStrategy;
+import com.bank.account.strategy.SavingsStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,20 +49,23 @@ class AccountServiceImplCrudTest {
     private CustomerClient customerClient;
 
     @Mock
+    private CreditClient creditClient;
+
+    @Mock
     private ReactiveMongoTemplate mongoTemplate;
 
-    @InjectMocks
     private AccountServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        ReflectionTestUtils.setField(service, "savingsMovementLimit", 10);
-        ReflectionTestUtils.setField(service, "checkingFee", new BigDecimal("10.00"));
-        ReflectionTestUtils.setField(service, "minOpeningSavings", BigDecimal.ZERO);
-        ReflectionTestUtils.setField(service, "minOpeningChecking", BigDecimal.ZERO);
-        ReflectionTestUtils.setField(service, "minOpeningFixedTerm", BigDecimal.ZERO);
-        ReflectionTestUtils.setField(service, "freeTransactions", 5);
-        ReflectionTestUtils.setField(service, "transactionFee", new BigDecimal("1.50"));
+        AccountStrategyRegistry registry = new AccountStrategyRegistry(List.of(
+                new SavingsStrategy(BigDecimal.ZERO, 10),
+                new CheckingStrategy(BigDecimal.ZERO, new BigDecimal("10.00")),
+                new FixedTermStrategy(BigDecimal.ZERO)));
+        AccountFactory factory = new AccountFactory(registry, 5, new BigDecimal("1.50"),
+                new BigDecimal("500"));
+        service = new AccountServiceImpl(repository, customerClient, mongoTemplate,
+                creditClient, registry, factory);
     }
 
     private Account personalAccount() {

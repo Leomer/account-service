@@ -39,5 +39,14 @@ Default values by account type:
 | PATCH | /accounts/{accountNumber}/balance | Atomic balance change (used by transaction-service) |
 | DELETE | /accounts/{accountNumber} | Delete an account |
 
+## Design patterns
+| Pattern | Where | Purpose |
+|---|---|---|
+| Strategy | `strategy/` (Savings, Checking, FixedTerm) | Rules, defaults and limits per account type without if/switch chains |
+| Factory | `factory/AccountFactory` | Single place that builds a new account (number, defaults, profile) |
+| Builder | Lombok `@Builder` on models and DTOs | Readable object construction |
+| Mapper | `mapper/` | Entity to DTO conversion |
+| Registry | `AccountStrategyRegistry` | Finds a strategy by account type |
+
 ## Documentation
 See the `docs/` folder: OpenAPI contract and sequence diagram.

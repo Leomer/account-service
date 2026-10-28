@@ -5,11 +5,14 @@ import com.bank.account.client.CustomerClient;
 import com.bank.account.dto.AccountDto;
 import com.bank.account.exception.BusinessException;
 import com.bank.account.exception.NotFoundException;
+import com.bank.account.factory.AccountFactory;
 import com.bank.account.mapper.AccountMapper;
 import com.bank.account.model.Account;
 import com.bank.account.model.AccountType;
 import com.bank.account.repository.AccountRepository;
 import com.bank.account.service.AccountService;
+import com.bank.account.strategy.AccountStrategyRegistry;
+import com.bank.account.strategy.AccountTypeStrategy;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Maybe;
@@ -37,29 +40,8 @@ public class AccountServiceImpl implements AccountService {
     private final ReactiveMongoTemplate mongoTemplate;
     private final CreditClient creditClient;
 
-    @Value("${business.savings-movement-limit}")
-    private int savingsMovementLimit;
-
-    @Value("${business.checking-maintenance-fee}")
-    private BigDecimal checkingFee;
-
-    @Value("${business.min-opening-savings}")
-    private BigDecimal minOpeningSavings;
-
-    @Value("${business.min-opening-checking}")
-    private BigDecimal minOpeningChecking;
-
-    @Value("${business.min-opening-fixed-term}")
-    private BigDecimal minOpeningFixedTerm;
-
-    @Value("${business.free-transactions}")
-    private int freeTransactions;
-
-    @Value("${business.transaction-fee}")
-    private BigDecimal transactionFee;
-
-    @Value("${business.vip-minimum-daily-average}")
-    private BigDecimal vipMinimumDailyAverage;
+    private final AccountStrategyRegistry strategies;
+    private final AccountFactory accountFactory;
 
     @Override
     public Single<AccountDto> create(AccountDto dto) {
@@ -72,14 +54,7 @@ public class AccountServiceImpl implements AccountService {
                 })
                 .flatMap(this::validateProfile)
                 .flatMap(this::validateOpeningAmount)
-                .map(valid -> {
-                    Account entity = AccountMapper.toEntity(valid);
-                    entity.setId(null);
-                    entity.setAccountNumber(generateAccountNumber());
-                    entity.setProfile(valid.getProfile());
-                    applyDefaults(entity);
-                    return entity;
-                })
+                .map(accountFactory::create)
                 .flatMap(entity -> Single.fromPublisher(repository.save(entity)))
                 .map(AccountMapper::toDto);
     }
@@ -153,65 +128,27 @@ public class AccountServiceImpl implements AccountService {
 
     /** Validates business rules by customer type and account type. */
     private Single<AccountDto> validate(AccountDto dto) {
+        AccountTypeStrategy strategy = strategies.get(dto.getAccountType());
         String customerType = dto.getCustomerType();
-        AccountType type = dto.getAccountType();
 
+        if (!strategy.allowedFor(customerType)) {
+            return Single.error(new BusinessException(
+                    customerType + " customers cannot have " + dto.getAccountType() + " accounts"));
+        }
         if ("BUSINESS".equals(customerType)) {
-            if (type == AccountType.SAVINGS || type == AccountType.FIXED_TERM) {
-                return Single.error(new BusinessException(
-                        "Business customers cannot have savings or fixed-term accounts"));
-            }
-            if (dto.getHolders() == null || dto.getHolders().isEmpty()) {
-                return Single.error(new BusinessException(
-                        "Business accounts require at least one holder"));
-            }
+            return (dto.getHolders() == null || dto.getHolders().isEmpty())
+                    ? Single.error(new BusinessException("Business accounts require at least one holder"))
+                    : Single.just(dto);
+        }
+        if (!strategy.limitedToOnePerPersonalCustomer()) {
             return Single.just(dto);
         }
-
-        if (type == AccountType.FIXED_TERM) {
-            return Single.just(dto);
-        }
-        return Single.fromPublisher(
-                        repository.countByCustomerDocumentAndAccountType(dto.getCustomerDocument(), type))
+        return Single.fromPublisher(repository.countByCustomerDocumentAndAccountType(
+                        dto.getCustomerDocument(), dto.getAccountType()))
                 .flatMap(count -> count > 0
                         ? Single.<AccountDto>error(new BusinessException(
-                        "Personal customers can have only one " + type + " account"))
+                        "Personal customers can have only one " + dto.getAccountType() + " account"))
                         : Single.just(dto));
-    }
-
-    /** Sets default fee and movement limit by account type. */
-    private void applyDefaults(Account entity) {
-        switch (entity.getAccountType()) {
-            case SAVINGS -> {
-                entity.setMaintenanceFee(BigDecimal.ZERO);
-                if (entity.getMonthlyMovementLimit() == null) {
-                    entity.setMonthlyMovementLimit(savingsMovementLimit);
-                }
-            }
-            case CHECKING -> {
-                if (entity.getMaintenanceFee() == null) {
-                    entity.setMaintenanceFee(checkingFee);
-                }
-                entity.setMonthlyMovementLimit(null); // unlimited
-            }
-            case FIXED_TERM -> {
-                entity.setMaintenanceFee(BigDecimal.ZERO);
-                entity.setMonthlyMovementLimit(1);
-            }
-        }
-        entity.setMinimumOpeningAmount(minimumOpening(entity.getAccountType()));
-        entity.setFreeTransactionLimit(freeTransactions);
-        entity.setTransactionFee(transactionFee);
-        if ("VIP".equals(entity.getProfile()) && entity.getAccountType() == AccountType.SAVINGS) {
-            entity.setMinimumDailyAverage(vipMinimumDailyAverage);
-        }
-        if ("PYME".equals(entity.getProfile()) && entity.getAccountType() == AccountType.CHECKING) {
-            entity.setMaintenanceFee(BigDecimal.ZERO);
-        }
-    }
-
-    private String generateAccountNumber() {
-        return UUID.randomUUID().toString().replace("-", "").substring(0, 14).toUpperCase();
     }
 
     private Single<Account> findEntity(String accountNumber) {
@@ -222,7 +159,7 @@ public class AccountServiceImpl implements AccountService {
 
     /** Rejects the account if the opening balance is below the minimum for its type. */
     private Single<AccountDto> validateOpeningAmount(AccountDto dto) {
-        BigDecimal minimum = minimumOpening(dto.getAccountType());
+        BigDecimal minimum = strategies.get(dto.getAccountType()).minimumOpeningAmount();
         BigDecimal opening = dto.getBalance() == null ? BigDecimal.ZERO : dto.getBalance();
         if (opening.compareTo(minimum) < 0) {
             log.warn("Opening amount {} is below the minimum {}", opening, minimum);
@@ -230,15 +167,6 @@ public class AccountServiceImpl implements AccountService {
                     "Minimum opening amount for " + dto.getAccountType() + " is " + minimum));
         }
         return Single.just(dto);
-    }
-
-    /** Minimum opening amount configured for each account type. */
-    private BigDecimal minimumOpening(AccountType type) {
-        return switch (type) {
-            case SAVINGS -> minOpeningSavings;
-            case CHECKING -> minOpeningChecking;
-            case FIXED_TERM -> minOpeningFixedTerm;
-        };
     }
 
     /** Applies the requirements of the VIP and PYME profiles. */
