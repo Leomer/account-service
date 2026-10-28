@@ -15,6 +15,7 @@ import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Single;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -33,6 +34,12 @@ public class AccountServiceImpl implements AccountService {
     private final AccountRepository repository;
     private final CustomerClient customerClient;
     private final ReactiveMongoTemplate mongoTemplate;
+
+    @Value("${business.savings-movement-limit}")
+    private int savingsMovementLimit;
+
+    @Value("${business.checking-maintenance-fee}")
+    private BigDecimal checkingFee;
 
     @Override
     public Single<AccountDto> create(AccountDto dto) {
@@ -154,12 +161,12 @@ public class AccountServiceImpl implements AccountService {
             case SAVINGS -> {
                 entity.setMaintenanceFee(BigDecimal.ZERO);
                 if (entity.getMonthlyMovementLimit() == null) {
-                    entity.setMonthlyMovementLimit(10);
+                    entity.setMonthlyMovementLimit(savingsMovementLimit);
                 }
             }
             case CHECKING -> {
                 if (entity.getMaintenanceFee() == null) {
-                    entity.setMaintenanceFee(new BigDecimal("10.00"));
+                    entity.setMaintenanceFee(checkingFee);
                 }
                 entity.setMonthlyMovementLimit(null); // unlimited
             }
