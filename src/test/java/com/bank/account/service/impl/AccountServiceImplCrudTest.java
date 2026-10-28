@@ -52,6 +52,11 @@ class AccountServiceImplCrudTest {
     void setUp() {
         ReflectionTestUtils.setField(service, "savingsMovementLimit", 10);
         ReflectionTestUtils.setField(service, "checkingFee", new BigDecimal("10.00"));
+        ReflectionTestUtils.setField(service, "minOpeningSavings", BigDecimal.ZERO);
+        ReflectionTestUtils.setField(service, "minOpeningChecking", BigDecimal.ZERO);
+        ReflectionTestUtils.setField(service, "minOpeningFixedTerm", BigDecimal.ZERO);
+        ReflectionTestUtils.setField(service, "freeTransactions", 5);
+        ReflectionTestUtils.setField(service, "transactionFee", new BigDecimal("1.50"));
     }
 
     private Account personalAccount() {

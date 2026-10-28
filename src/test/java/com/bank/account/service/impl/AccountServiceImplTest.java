@@ -51,6 +51,11 @@ class AccountServiceImplTest {
         // @Value fields are not filled by Mockito, so we set them manually
         ReflectionTestUtils.setField(service, "savingsMovementLimit", 10);
         ReflectionTestUtils.setField(service, "checkingFee", new BigDecimal("10.00"));
+        ReflectionTestUtils.setField(service, "minOpeningSavings", BigDecimal.ZERO);
+        ReflectionTestUtils.setField(service, "minOpeningChecking", BigDecimal.ZERO);
+        ReflectionTestUtils.setField(service, "minOpeningFixedTerm", BigDecimal.ZERO);
+        ReflectionTestUtils.setField(service, "freeTransactions", 5);
+        ReflectionTestUtils.setField(service, "transactionFee", new BigDecimal("1.50"));
     }
 
     // ---------- helpers ----------
@@ -192,5 +197,39 @@ class AccountServiceImplTest {
         service.updateBalance("ACC1", new BigDecimal("-500"))
                 .test()
                 .assertError(BusinessException.class);
+    }
+
+    @Test
+    void createShouldFailWhenOpeningAmountIsBelowMinimum() {
+        ReflectionTestUtils.setField(service, "minOpeningChecking", new BigDecimal("50"));
+        when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
+        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.CHECKING))
+                .thenReturn(Mono.just(0L));
+
+        AccountDto dto = request(AccountType.CHECKING);
+        dto.setBalance(new BigDecimal("10"));
+
+        service.create(dto).test().assertError(BusinessException.class);
+
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void createShouldSucceedWhenOpeningAmountMeetsMinimum() {
+        ReflectionTestUtils.setField(service, "minOpeningChecking", new BigDecimal("50"));
+        when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
+        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.CHECKING))
+                .thenReturn(Mono.just(0L));
+        saveReturnsSameEntity();
+
+        AccountDto dto = request(AccountType.CHECKING);
+        dto.setBalance(new BigDecimal("50"));
+
+        service.create(dto)
+                .test()
+                .assertValue(r -> new BigDecimal("50").compareTo(r.getMinimumOpeningAmount()) == 0
+                        && Integer.valueOf(5).equals(r.getFreeTransactionLimit())
+                        && new BigDecimal("1.50").compareTo(r.getTransactionFee()) == 0)
+                .assertComplete();
     }
 }
