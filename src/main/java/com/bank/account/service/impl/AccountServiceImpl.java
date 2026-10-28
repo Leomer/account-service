@@ -115,8 +115,8 @@ public class AccountServiceImpl implements AccountService {
         Update update = new Update().inc("balance", amount);
         return Maybe.fromPublisher(mongoTemplate.findAndModify(
                         query, update, FindAndModifyOptions.options().returnNew(true), Account.class))
-                .switchIfEmpty(findEntity(accountNumber)
-                        .flatMap(a -> Single.<Account>error(new BusinessException("Insufficient funds"))))
+                .switchIfEmpty(Single.defer(() -> findEntity(accountNumber)
+                        .flatMap(a -> Single.<Account>error(new BusinessException("Insufficient funds")))))
                 .map(AccountMapper::toDto);
     }
 
