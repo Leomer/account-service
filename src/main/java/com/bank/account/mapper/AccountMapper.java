@@ -26,6 +26,8 @@ public final class AccountMapper {
                 .minimumOpeningAmount(e.getMinimumOpeningAmount())
                 .freeTransactionLimit(e.getFreeTransactionLimit())
                 .transactionFee(e.getTransactionFee())
+                .profile(e.getProfile())
+                .minimumDailyAverage(e.getMinimumDailyAverage())
                 .build();
     }
 

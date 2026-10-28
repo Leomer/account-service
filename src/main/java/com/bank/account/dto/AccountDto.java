@@ -49,4 +49,10 @@ public class AccountDto {
 
     /** Commission charged per transaction beyond the free limit. */
     private BigDecimal transactionFee;
+
+    /** Profile of the account: STANDARD, VIP or PYME. */
+    private String profile;
+
+    /** Minimum daily average balance required each month (VIP accounts). */
+    private BigDecimal minimumDailyAverage;
 }

@@ -1,7 +1,9 @@
 package com.bank.account.service.impl;
 
+import com.bank.account.client.CreditClient;
 import com.bank.account.client.CustomerClient;
 import com.bank.account.dto.AccountDto;
+import com.bank.account.dto.CreditResponse;
 import com.bank.account.dto.CustomerResponse;
 import com.bank.account.exception.BusinessException;
 import com.bank.account.exception.NotFoundException;
@@ -19,6 +21,7 @@ import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.UpdateDefinition;
 import org.springframework.test.util.ReflectionTestUtils;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
@@ -43,6 +46,9 @@ class AccountServiceImplTest {
     @Mock
     private ReactiveMongoTemplate mongoTemplate;
 
+    @Mock
+    private CreditClient creditClient;
+
     @InjectMocks
     private AccountServiceImpl service;
 
@@ -56,6 +62,7 @@ class AccountServiceImplTest {
         ReflectionTestUtils.setField(service, "minOpeningFixedTerm", BigDecimal.ZERO);
         ReflectionTestUtils.setField(service, "freeTransactions", 5);
         ReflectionTestUtils.setField(service, "transactionFee", new BigDecimal("1.50"));
+        ReflectionTestUtils.setField(service, "vipMinimumDailyAverage", new BigDecimal("500"));
     }
 
     // ---------- helpers ----------
@@ -231,5 +238,74 @@ class AccountServiceImplTest {
                         && Integer.valueOf(5).equals(r.getFreeTransactionLimit())
                         && new BigDecimal("1.50").compareTo(r.getTransactionFee()) == 0)
                 .assertComplete();
+    }
+
+    private CustomerResponse customerWithProfile(String type, String profile) {
+        CustomerResponse c = customer(type);
+        c.setProfile(profile);
+        return c;
+    }
+
+    private CreditResponse card() {
+        CreditResponse c = new CreditResponse();
+        c.setCreditNumber("CR1");
+        c.setCreditType("CREDIT_CARD");
+        return c;
+    }
+
+    @Test
+    void createVipSavingsShouldFailWithoutCreditCard() {
+        when(customerClient.findByDocument("12345678"))
+                .thenReturn(Mono.just(customerWithProfile("PERSONAL", "VIP")));
+        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.SAVINGS))
+                .thenReturn(Mono.just(0L));
+        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.empty());
+
+        service.create(request(AccountType.SAVINGS)).test().assertError(BusinessException.class);
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void createVipSavingsShouldSucceedWithCreditCard() {
+        when(customerClient.findByDocument("12345678"))
+                .thenReturn(Mono.just(customerWithProfile("PERSONAL", "VIP")));
+        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.SAVINGS))
+                .thenReturn(Mono.just(0L));
+        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.just(card()));
+        saveReturnsSameEntity();
+
+        service.create(request(AccountType.SAVINGS))
+                .test()
+                .assertValue(a -> "VIP".equals(a.getProfile())
+                        && new BigDecimal("500").compareTo(a.getMinimumDailyAverage()) == 0)
+                .assertComplete();
+    }
+
+    @Test
+    void createPymeCheckingShouldHaveNoMaintenanceFee() {
+        when(customerClient.findByDocument("12345678"))
+                .thenReturn(Mono.just(customerWithProfile("BUSINESS", "PYME")));
+        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.just(card()));
+        saveReturnsSameEntity();
+
+        AccountDto dto = request(AccountType.CHECKING);
+        dto.setHolders(List.of("12345678"));
+
+        service.create(dto)
+                .test()
+                .assertValue(a -> BigDecimal.ZERO.compareTo(a.getMaintenanceFee()) == 0)
+                .assertComplete();
+    }
+
+    @Test
+    void createPymeCheckingShouldFailWithoutCreditCard() {
+        when(customerClient.findByDocument("12345678"))
+                .thenReturn(Mono.just(customerWithProfile("BUSINESS", "PYME")));
+        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.empty());
+
+        AccountDto dto = request(AccountType.CHECKING);
+        dto.setHolders(List.of("12345678"));
+
+        service.create(dto).test().assertError(BusinessException.class);
     }
 }

@@ -20,4 +20,10 @@ public class WebClientConfig {
                                        @Value("${services.customer.url}") String baseUrl) {
         return builder.clone().baseUrl(baseUrl).build();
     }
+
+    @Bean
+    public WebClient creditWebClient(WebClient.Builder builder,
+                                     @Value("${services.credit.url}") String baseUrl) {
+        return builder.clone().baseUrl(baseUrl).build();
+    }
 }

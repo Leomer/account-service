@@ -1,5 +1,6 @@
 package com.bank.account.service.impl;
 
+import com.bank.account.client.CreditClient;
 import com.bank.account.client.CustomerClient;
 import com.bank.account.dto.AccountDto;
 import com.bank.account.exception.BusinessException;
@@ -34,6 +35,7 @@ public class AccountServiceImpl implements AccountService {
     private final AccountRepository repository;
     private final CustomerClient customerClient;
     private final ReactiveMongoTemplate mongoTemplate;
+    private final CreditClient creditClient;
 
     @Value("${business.savings-movement-limit}")
     private int savingsMovementLimit;
@@ -56,19 +58,25 @@ public class AccountServiceImpl implements AccountService {
     @Value("${business.transaction-fee}")
     private BigDecimal transactionFee;
 
+    @Value("${business.vip-minimum-daily-average}")
+    private BigDecimal vipMinimumDailyAverage;
+
     @Override
     public Single<AccountDto> create(AccountDto dto) {
         log.info("Creating {} account for customer {}", dto.getAccountType(), dto.getCustomerDocument());
         return Single.fromPublisher(customerClient.findByDocument(dto.getCustomerDocument()))
                 .flatMap(customer -> {
                     dto.setCustomerType(customer.getType());
+                    dto.setProfile(customer.getProfile() == null ? "STANDARD" : customer.getProfile());
                     return validate(dto);
                 })
+                .flatMap(this::validateProfile)
                 .flatMap(this::validateOpeningAmount)
                 .map(valid -> {
                     Account entity = AccountMapper.toEntity(valid);
                     entity.setId(null);
                     entity.setAccountNumber(generateAccountNumber());
+                    entity.setProfile(valid.getProfile());
                     applyDefaults(entity);
                     return entity;
                 })
@@ -194,6 +202,12 @@ public class AccountServiceImpl implements AccountService {
         entity.setMinimumOpeningAmount(minimumOpening(entity.getAccountType()));
         entity.setFreeTransactionLimit(freeTransactions);
         entity.setTransactionFee(transactionFee);
+        if ("VIP".equals(entity.getProfile()) && entity.getAccountType() == AccountType.SAVINGS) {
+            entity.setMinimumDailyAverage(vipMinimumDailyAverage);
+        }
+        if ("PYME".equals(entity.getProfile()) && entity.getAccountType() == AccountType.CHECKING) {
+            entity.setMaintenanceFee(BigDecimal.ZERO);
+        }
     }
 
     private String generateAccountNumber() {
@@ -225,5 +239,28 @@ public class AccountServiceImpl implements AccountService {
             case CHECKING -> minOpeningChecking;
             case FIXED_TERM -> minOpeningFixedTerm;
         };
+    }
+
+    /** Applies the requirements of the VIP and PYME profiles. */
+    private Single<AccountDto> validateProfile(AccountDto dto) {
+        String profile = dto.getProfile();
+        AccountType type = dto.getAccountType();
+
+        boolean vipSavings = "VIP".equals(profile) && type == AccountType.SAVINGS;
+        boolean pymeChecking = "PYME".equals(profile) && type == AccountType.CHECKING;
+        if (!vipSavings && !pymeChecking) {
+            return Single.just(dto);   // standard rules only
+        }
+        return hasCreditCard(dto.getCustomerDocument())
+                .flatMap(has -> has
+                        ? Single.just(dto)
+                        : Single.<AccountDto>error(new BusinessException(
+                        profile + " accounts require a credit card with the bank")));
+    }
+
+    /** True when the customer holds at least one credit card. */
+    private Single<Boolean> hasCreditCard(String customerDocument) {
+        return Flowable.fromPublisher(creditClient.findByCustomer(customerDocument))
+                .any(c -> "CREDIT_CARD".equals(c.getCreditType()));
     }
 }
