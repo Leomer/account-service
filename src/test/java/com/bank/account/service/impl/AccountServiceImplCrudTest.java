@@ -4,6 +4,7 @@ import com.bank.account.client.CreditClient;
 import com.bank.account.client.CustomerClient;
 import com.bank.account.dto.AccountDto;
 import com.bank.account.dto.CustomerResponse;
+import com.bank.account.event.AccountEventPublisher;
 import com.bank.account.exception.BusinessException;
 import com.bank.account.exception.NotFoundException;
 import com.bank.account.factory.AccountFactory;
@@ -52,6 +53,9 @@ class AccountServiceImplCrudTest {
     @Mock
     private ReactiveMongoTemplate mongoTemplate;
 
+    @Mock
+    private AccountEventPublisher eventPublisher;
+
     private AccountServiceImpl service;
 
     @BeforeEach
@@ -63,7 +67,7 @@ class AccountServiceImplCrudTest {
         AccountFactory factory = new AccountFactory(registry, 5, new BigDecimal("1.50"),
                 new BigDecimal("500"));
         service = new AccountServiceImpl(repository, customerClient, mongoTemplate,
-                creditClient, registry, factory);
+                creditClient, registry, factory, eventPublisher);
     }
 
     // ---------- helpers ----------

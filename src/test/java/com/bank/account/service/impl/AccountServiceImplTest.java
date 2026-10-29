@@ -5,6 +5,7 @@ import com.bank.account.client.CustomerClient;
 import com.bank.account.dto.AccountDto;
 import com.bank.account.dto.CreditResponse;
 import com.bank.account.dto.CustomerResponse;
+import com.bank.account.event.AccountEventPublisher;
 import com.bank.account.exception.BusinessException;
 import com.bank.account.exception.NotFoundException;
 import com.bank.account.factory.AccountFactory;
@@ -52,6 +53,9 @@ class AccountServiceImplTest {
     @Mock
     private ReactiveMongoTemplate mongoTemplate;
 
+    @Mock
+    private AccountEventPublisher eventPublisher;
+
     private AccountServiceImpl service;
 
     @BeforeEach
@@ -70,7 +74,7 @@ class AccountServiceImplTest {
         AccountFactory factory = new AccountFactory(registry, 5, new BigDecimal("1.50"),
                 new BigDecimal("500"));
         service = new AccountServiceImpl(repository, customerClient, mongoTemplate,
-                creditClient, registry, factory);
+                creditClient, registry, factory, eventPublisher);
     }
 
     // ---------- helpers ----------
@@ -348,5 +352,18 @@ class AccountServiceImplTest {
         service.updateBalance("ACC1", new BigDecimal("-500"))
                 .test()
                 .assertError(BusinessException.class);
+    }
+
+    @Test
+    void createShouldPublishAccountCreatedEvent() {
+        when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
+        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.SAVINGS))
+                .thenReturn(Mono.just(0L));
+        noOverdueDebt();
+        saveReturnsSameEntity();
+
+        service.create(request(AccountType.SAVINGS)).test().assertComplete();
+
+        verify(eventPublisher).accountCreated(any(AccountDto.class));
     }
 }

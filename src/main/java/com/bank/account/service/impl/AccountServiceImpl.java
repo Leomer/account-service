@@ -3,6 +3,7 @@ package com.bank.account.service.impl;
 import com.bank.account.client.CreditClient;
 import com.bank.account.client.CustomerClient;
 import com.bank.account.dto.AccountDto;
+import com.bank.account.event.AccountEventPublisher;
 import com.bank.account.exception.BusinessException;
 import com.bank.account.exception.NotFoundException;
 import com.bank.account.factory.AccountFactory;
@@ -42,6 +43,7 @@ public class AccountServiceImpl implements AccountService {
 
     private final AccountStrategyRegistry strategies;
     private final AccountFactory accountFactory;
+    private final AccountEventPublisher eventPublisher;
 
     @Override
     public Single<AccountDto> create(AccountDto dto) {
@@ -57,7 +59,8 @@ public class AccountServiceImpl implements AccountService {
                 .flatMap(this::validateOpeningAmount)
                 .map(accountFactory::create)
                 .flatMap(entity -> Single.fromPublisher(repository.save(entity)))
-                .map(AccountMapper::toDto);
+                .map(AccountMapper::toDto)
+                .doOnSuccess(eventPublisher::accountCreated);
     }
 
     @Override
@@ -124,7 +127,8 @@ public class AccountServiceImpl implements AccountService {
     public Completable delete(String accountNumber) {
         log.info("Deleting account {}", accountNumber);
         return findEntity(accountNumber)
-                .flatMapCompletable(existing -> Completable.fromPublisher(repository.delete(existing)));
+                .flatMapCompletable(existing -> Completable.fromPublisher(repository.delete(existing))
+                        .doOnComplete(() -> eventPublisher.accountDeleted(accountNumber)));
     }
 
     /** Validates business rules by customer type and account type. */
