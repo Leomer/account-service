@@ -18,14 +18,12 @@ import com.bank.account.strategy.SavingsStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.UpdateDefinition;
-import org.springframework.test.util.ReflectionTestUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -38,7 +36,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** Unit tests for {@link AccountServiceImpl}. */
+/** Unit tests for {@link AccountServiceImpl}: creation rules. */
 @ExtendWith(MockitoExtension.class)
 class AccountServiceImplTest {
 
@@ -49,18 +47,25 @@ class AccountServiceImplTest {
     private CustomerClient customerClient;
 
     @Mock
-    private ReactiveMongoTemplate mongoTemplate;
+    private CreditClient creditClient;
 
     @Mock
-    private CreditClient creditClient;
+    private ReactiveMongoTemplate mongoTemplate;
 
     private AccountServiceImpl service;
 
     @BeforeEach
     void setUp() {
+        buildService("0");
+    }
+
+    /**
+     * Builds the service with real strategies; only the checking minimum varies.
+     */
+    private void buildService(String checkingMinimum) {
         AccountStrategyRegistry registry = new AccountStrategyRegistry(List.of(
                 new SavingsStrategy(BigDecimal.ZERO, 10),
-                new CheckingStrategy(BigDecimal.ZERO, new BigDecimal("10.00")),
+                new CheckingStrategy(new BigDecimal(checkingMinimum), new BigDecimal("10.00")),
                 new FixedTermStrategy(BigDecimal.ZERO)));
         AccountFactory factory = new AccountFactory(registry, 5, new BigDecimal("1.50"),
                 new BigDecimal("500"));
@@ -77,6 +82,19 @@ class AccountServiceImplTest {
         return response;
     }
 
+    private CustomerResponse customerWithProfile(String type, String profile) {
+        CustomerResponse c = customer(type);
+        c.setProfile(profile);
+        return c;
+    }
+
+    private CreditResponse card() {
+        CreditResponse c = new CreditResponse();
+        c.setCreditNumber("CR1");
+        c.setCreditType("CREDIT_CARD");
+        return c;
+    }
+
     private AccountDto request(AccountType type) {
         return AccountDto.builder()
                 .accountType(type)
@@ -84,19 +102,23 @@ class AccountServiceImplTest {
                 .build();
     }
 
-    /** Makes repository.save return the same entity it receives. */
+    private void noOverdueDebt() {
+        when(creditClient.hasOverdueDebt("12345678")).thenReturn(Mono.just(false));
+    }
+
     private void saveReturnsSameEntity() {
         when(repository.save(any(Account.class)))
                 .thenAnswer(invocation -> Mono.just(invocation.getArgument(0)));
     }
 
-    // ---------- personal customers ----------
+// ---------- personal customers ----------
 
     @Test
     void createSavingsShouldSucceedForPersonalCustomerWithoutAccount() {
         when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
         when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.SAVINGS))
                 .thenReturn(Mono.just(0L));
+        noOverdueDebt();
         saveReturnsSameEntity();
 
         service.create(request(AccountType.SAVINGS))
@@ -123,6 +145,7 @@ class AccountServiceImplTest {
     @Test
     void createFixedTermShouldNotCheckExistingAccounts() {
         when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
+        noOverdueDebt();
         saveReturnsSameEntity();
 
         service.create(request(AccountType.FIXED_TERM))
@@ -158,6 +181,7 @@ class AccountServiceImplTest {
     @Test
     void createCheckingShouldSucceedForBusinessCustomerWithHolder() {
         when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("BUSINESS")));
+        noOverdueDebt();
         saveReturnsSameEntity();
 
         AccountDto dto = request(AccountType.CHECKING);
@@ -184,6 +208,123 @@ class AccountServiceImplTest {
         verify(repository, never()).save(any());
     }
 
+    // ---------- opening amount ----------
+
+    @Test
+    void createShouldFailWhenOpeningAmountIsBelowMinimum() {
+        buildService("50");
+        when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
+        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.CHECKING))
+                .thenReturn(Mono.just(0L));
+        noOverdueDebt();
+
+        AccountDto dto = request(AccountType.CHECKING);
+        dto.setBalance(new BigDecimal("10"));
+
+        service.create(dto).test().assertError(BusinessException.class);
+
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void createShouldSucceedWhenOpeningAmountMeetsMinimum() {
+        buildService("50");
+        when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
+        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.CHECKING))
+                .thenReturn(Mono.just(0L));
+        noOverdueDebt();
+        saveReturnsSameEntity();
+
+        AccountDto dto = request(AccountType.CHECKING);
+        dto.setBalance(new BigDecimal("50"));
+
+        service.create(dto)
+                .test()
+                .assertValue(r -> new BigDecimal("50").compareTo(r.getMinimumOpeningAmount()) == 0
+                        && Integer.valueOf(5).equals(r.getFreeTransactionLimit())
+                        && new BigDecimal("1.50").compareTo(r.getTransactionFee()) == 0)
+                .assertComplete();
+    }
+
+    // ---------- overdue debt ----------
+
+    @Test
+    void createShouldFailWhenCustomerHasOverdueDebt() {
+        when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
+        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.SAVINGS))
+                .thenReturn(Mono.just(0L));
+        when(creditClient.hasOverdueDebt("12345678")).thenReturn(Mono.just(true));
+
+        service.create(request(AccountType.SAVINGS))
+                .test()
+                .assertError(BusinessException.class);
+
+        verify(repository, never()).save(any());
+    }
+
+    // ---------- VIP and PYME profiles ----------
+
+    @Test
+    void createVipSavingsShouldFailWithoutCreditCard() {
+        when(customerClient.findByDocument("12345678"))
+                .thenReturn(Mono.just(customerWithProfile("PERSONAL", "VIP")));
+        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.SAVINGS))
+                .thenReturn(Mono.just(0L));
+        noOverdueDebt();
+        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.empty());
+
+        service.create(request(AccountType.SAVINGS)).test().assertError(BusinessException.class);
+
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void createVipSavingsShouldSucceedWithCreditCard() {
+        when(customerClient.findByDocument("12345678"))
+                .thenReturn(Mono.just(customerWithProfile("PERSONAL", "VIP")));
+        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.SAVINGS))
+                .thenReturn(Mono.just(0L));
+        noOverdueDebt();
+        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.just(card()));
+        saveReturnsSameEntity();
+
+        service.create(request(AccountType.SAVINGS))
+                .test()
+                .assertValue(a -> "VIP".equals(a.getProfile())
+                        && new BigDecimal("500").compareTo(a.getMinimumDailyAverage()) == 0)
+                .assertComplete();
+    }
+
+    @Test
+    void createPymeCheckingShouldHaveNoMaintenanceFee() {
+        when(customerClient.findByDocument("12345678"))
+                .thenReturn(Mono.just(customerWithProfile("BUSINESS", "PYME")));
+        noOverdueDebt();
+        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.just(card()));
+        saveReturnsSameEntity();
+
+        AccountDto dto = request(AccountType.CHECKING);
+        dto.setHolders(List.of("12345678"));
+
+        service.create(dto)
+                .test()
+                .assertValue(a -> BigDecimal.ZERO.compareTo(a.getMaintenanceFee()) == 0)
+                .assertComplete();
+    }
+
+    @Test
+    void createPymeCheckingShouldFailWithoutCreditCard() {
+        when(customerClient.findByDocument("12345678"))
+                .thenReturn(Mono.just(customerWithProfile("BUSINESS", "PYME")));
+        noOverdueDebt();
+        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.empty());
+
+        AccountDto dto = request(AccountType.CHECKING);
+        dto.setHolders(List.of("12345678"));
+
+        service.create(dto).test().assertError(BusinessException.class);
+    }
+
     // ---------- queries and balance ----------
 
     @Test
@@ -207,119 +348,5 @@ class AccountServiceImplTest {
         service.updateBalance("ACC1", new BigDecimal("-500"))
                 .test()
                 .assertError(BusinessException.class);
-    }
-
-    @Test
-    void createShouldFailWhenOpeningAmountIsBelowMinimum() {
-        useCheckingMinimum("50");
-        when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
-        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.CHECKING))
-                .thenReturn(Mono.just(0L));
-
-        AccountDto dto = request(AccountType.CHECKING);
-        dto.setBalance(new BigDecimal("10"));
-
-        service.create(dto).test().assertError(BusinessException.class);
-
-        verify(repository, never()).save(any());
-    }
-
-    @Test
-    void createShouldSucceedWhenOpeningAmountMeetsMinimum() {
-        useCheckingMinimum("50");
-        when(customerClient.findByDocument("12345678")).thenReturn(Mono.just(customer("PERSONAL")));
-        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.CHECKING))
-                .thenReturn(Mono.just(0L));
-        saveReturnsSameEntity();
-
-        AccountDto dto = request(AccountType.CHECKING);
-        dto.setBalance(new BigDecimal("50"));
-
-        service.create(dto)
-                .test()
-                .assertValue(r -> new BigDecimal("50").compareTo(r.getMinimumOpeningAmount()) == 0
-                        && Integer.valueOf(5).equals(r.getFreeTransactionLimit())
-                        && new BigDecimal("1.50").compareTo(r.getTransactionFee()) == 0)
-                .assertComplete();
-    }
-
-    private CustomerResponse customerWithProfile(String type, String profile) {
-        CustomerResponse c = customer(type);
-        c.setProfile(profile);
-        return c;
-    }
-
-    private void useCheckingMinimum(String minimum) {
-        AccountStrategyRegistry registry = new AccountStrategyRegistry(List.of(
-                new SavingsStrategy(BigDecimal.ZERO, 10),
-                new CheckingStrategy(new BigDecimal(minimum), new BigDecimal("10.00")),
-                new FixedTermStrategy(BigDecimal.ZERO)));
-        AccountFactory factory = new AccountFactory(registry, 5, new BigDecimal("1.50"),
-                new BigDecimal("500"));
-        service = new AccountServiceImpl(repository, customerClient, mongoTemplate,
-                creditClient, registry, factory);
-    }
-
-    private CreditResponse card() {
-        CreditResponse c = new CreditResponse();
-        c.setCreditNumber("CR1");
-        c.setCreditType("CREDIT_CARD");
-        return c;
-    }
-
-    @Test
-    void createVipSavingsShouldFailWithoutCreditCard() {
-        when(customerClient.findByDocument("12345678"))
-                .thenReturn(Mono.just(customerWithProfile("PERSONAL", "VIP")));
-        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.SAVINGS))
-                .thenReturn(Mono.just(0L));
-        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.empty());
-
-        service.create(request(AccountType.SAVINGS)).test().assertError(BusinessException.class);
-        verify(repository, never()).save(any());
-    }
-
-    @Test
-    void createVipSavingsShouldSucceedWithCreditCard() {
-        when(customerClient.findByDocument("12345678"))
-                .thenReturn(Mono.just(customerWithProfile("PERSONAL", "VIP")));
-        when(repository.countByCustomerDocumentAndAccountType("12345678", AccountType.SAVINGS))
-                .thenReturn(Mono.just(0L));
-        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.just(card()));
-        saveReturnsSameEntity();
-
-        service.create(request(AccountType.SAVINGS))
-                .test()
-                .assertValue(a -> "VIP".equals(a.getProfile())
-                        && new BigDecimal("500").compareTo(a.getMinimumDailyAverage()) == 0)
-                .assertComplete();
-    }
-
-    @Test
-    void createPymeCheckingShouldHaveNoMaintenanceFee() {
-        when(customerClient.findByDocument("12345678"))
-                .thenReturn(Mono.just(customerWithProfile("BUSINESS", "PYME")));
-        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.just(card()));
-        saveReturnsSameEntity();
-
-        AccountDto dto = request(AccountType.CHECKING);
-        dto.setHolders(List.of("12345678"));
-
-        service.create(dto)
-                .test()
-                .assertValue(a -> BigDecimal.ZERO.compareTo(a.getMaintenanceFee()) == 0)
-                .assertComplete();
-    }
-
-    @Test
-    void createPymeCheckingShouldFailWithoutCreditCard() {
-        when(customerClient.findByDocument("12345678"))
-                .thenReturn(Mono.just(customerWithProfile("BUSINESS", "PYME")));
-        when(creditClient.findByCustomer("12345678")).thenReturn(Flux.empty());
-
-        AccountDto dto = request(AccountType.CHECKING);
-        dto.setHolders(List.of("12345678"));
-
-        service.create(dto).test().assertError(BusinessException.class);
     }
 }

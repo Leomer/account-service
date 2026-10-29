@@ -17,14 +17,12 @@ import com.bank.account.strategy.SavingsStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.UpdateDefinition;
-import org.springframework.test.util.ReflectionTestUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -68,6 +66,8 @@ class AccountServiceImplCrudTest {
                 creditClient, registry, factory);
     }
 
+    // ---------- helpers ----------
+
     private Account personalAccount() {
         return Account.builder().accountNumber("ACC1").customerType("PERSONAL")
                 .accountType(AccountType.CHECKING).balance(BigDecimal.TEN)
@@ -110,6 +110,7 @@ class AccountServiceImplCrudTest {
         when(customerClient.findByDocument("123")).thenReturn(Mono.just(customer("PERSONAL")));
         when(repository.countByCustomerDocumentAndAccountType("123", AccountType.CHECKING))
                 .thenReturn(Mono.just(0L));
+        when(creditClient.hasOverdueDebt("123")).thenReturn(Mono.just(false));
         when(repository.save(any(Account.class))).thenAnswer(i -> Mono.just(i.getArgument(0)));
 
         AccountDto dto = AccountDto.builder().accountType(AccountType.CHECKING)

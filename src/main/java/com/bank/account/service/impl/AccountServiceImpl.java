@@ -52,6 +52,7 @@ public class AccountServiceImpl implements AccountService {
                     dto.setProfile(customer.getProfile() == null ? "STANDARD" : customer.getProfile());
                     return validate(dto);
                 })
+                .flatMap(this::validateNoOverdueDebt)
                 .flatMap(this::validateProfile)
                 .flatMap(this::validateOpeningAmount)
                 .map(accountFactory::create)
@@ -190,5 +191,14 @@ public class AccountServiceImpl implements AccountService {
     private Single<Boolean> hasCreditCard(String customerDocument) {
         return Flowable.fromPublisher(creditClient.findByCustomer(customerDocument))
                 .any(c -> "CREDIT_CARD".equals(c.getCreditType()));
+    }
+
+    /** Rejects the request when the customer has overdue debt. */
+    private Single<AccountDto> validateNoOverdueDebt(AccountDto dto) {
+        return Single.fromPublisher(creditClient.hasOverdueDebt(dto.getCustomerDocument()))
+                .flatMap(overdue -> overdue
+                        ? Single.<AccountDto>error(new BusinessException(
+                        "Customer has overdue debt and cannot acquire new products"))
+                        : Single.just(dto));
     }
 }
